@@ -5,6 +5,7 @@
 {-# LANGUAGE FlexibleContexts    #-}
 {-# LANGUAGE LambdaCase          #-}
 {-# LANGUAGE NamedFieldPuns      #-}
+{-# LANGUAGE NumericUnderscores  #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 
 -- | An index of unspent transaction outputs, and some functions for validating
@@ -27,6 +28,8 @@ module Ledger.Index(
     ValidationPhase(..),
     InOutMatch(..),
     minFee,
+    maxFee,
+    minAdaTxOut,
     mkTxInfo,
     -- * Actual validation
     validateTransaction,
@@ -43,7 +46,6 @@ module Ledger.Index(
     ) where
 
 import Prelude hiding (lookup)
-
 
 import Codec.Serialise (Serialise)
 import Control.DeepSeq (NFData)
@@ -67,6 +69,7 @@ import Ledger.Orphans ()
 import Ledger.Scripts
 import Ledger.TimeSlot qualified as TimeSlot
 import Ledger.Tx (txId)
+import Plutus.V1.Ledger.Ada (Ada)
 import Plutus.V1.Ledger.Ada qualified as Ada
 import Plutus.V1.Ledger.Address
 import Plutus.V1.Ledger.Api qualified as Api
@@ -135,6 +138,8 @@ data ValidationError =
     -- ^ The amount spent by the transaction differs from the amount consumed by it.
     | NegativeValue Tx
     -- ^ The transaction produces an output with a negative value.
+    | ValueContainsLessThanMinAda Tx Ada
+    -- ^ The transaction produces an output with a value containing less than one Ada.
     | NonAdaFees Tx
     -- ^ The fee is not denominated entirely in Ada.
     | ScriptFailure ScriptError
@@ -198,6 +203,7 @@ validateTransactionOffChain :: ValidationMonad m
 validateTransactionOffChain t = do
     checkValuePreserved t
     checkPositiveValues t
+    checkMinAdaInTxOutputs t minAdaTxOut
     checkFeeIsAda t
 
     -- see note [Minting of Ada]
@@ -363,6 +369,25 @@ checkPositiveValues t =
     then pure ()
     else throwError $ NegativeValue t
 
+{-# INLINABLE minAdaTxOut #-}
+-- Minimum required Ada for each tx output.
+--
+-- TODO: In the future, make the value configurable.
+minAdaTxOut :: Ada
+minAdaTxOut = Ada.lovelaceOf 2_000_000
+
+-- | Check if each transaction outputs produced at least two Ada (this is a
+-- restriction on the real Cardano network).
+--
+-- Normally, the minimum is 1 Ada, but transaction outputs that have datum are
+-- slightly more expensive than 1 Ada. So, to be on the safe side, we set the
+-- minimum Ada of each transaction output to 2 Ada.
+checkMinAdaInTxOutputs :: ValidationMonad m => Tx -> Ada -> m ()
+checkMinAdaInTxOutputs t@Tx { txOutputs } ada =
+  if all (\txOut -> Ada.fromValue (txOutValue txOut) >= ada) txOutputs
+  then pure ()
+  else throwError $ ValueContainsLessThanMinAda t ada
+
 -- | Check if the fees are paid exclusively in Ada.
 checkFeeIsAda :: ValidationMonad m => Tx -> m ()
 checkFeeIsAda t =
@@ -373,6 +398,11 @@ checkFeeIsAda t =
 -- | Minimum transaction fee.
 minFee :: Tx -> V.Value
 minFee = const (Ada.lovelaceValueOf 10)
+
+-- | TODO Should be calculated based on the maximum script size permitted on
+-- the Cardano blockchain.
+maxFee :: Ada
+maxFee = Ada.lovelaceOf 1_000_000
 
 -- | Check that transaction fee is bigger than the minimum fee.
 --   Skip the check on the first transaction (no inputs).

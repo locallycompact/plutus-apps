@@ -4,11 +4,9 @@
 {-# LANGUAGE NamedFieldPuns      #-}
 {-# LANGUAGE NoImplicitPrelude   #-}
 {-# LANGUAGE OverloadedStrings   #-}
-{-# LANGUAGE PatternGuards       #-}
 {-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TypeApplications    #-}
 {-# LANGUAGE TypeFamilies        #-}
-{-# LANGUAGE ViewPatterns        #-}
 {-# OPTIONS_GHC -fno-specialise #-}
 {-# OPTIONS_GHC -fno-omit-interface-pragmas #-}
 {-# OPTIONS_GHC -fno-ignore-interface-pragmas #-}
@@ -127,15 +125,16 @@ mkValidator (StateMachine step isFinal check threadToken) currentState input ptx
                     traceIfFalse "S3" {-"Non-zero value allocated in final state"-} (isZero newValue)
                     && traceIfFalse "S4" {-"State transition invalid - constraints not satisfied by ScriptContext"-} (checkScriptContext newConstraints ptx)
                 | otherwise ->
-                    let txc =
+                    let newValueWithTT = newValue <> threadTokenValueInner threadToken (ownHash ptx)
+                        txc =
                             newConstraints
-                                { txOwnOutputs=
+                                { txOwnOutputs =
                                     [ OutputConstraint
                                         { ocDatum = newData
                                           -- Check that the thread token value is still there
-                                        , ocValue = newValue <> threadTokenValueInner threadToken (ownHash ptx)
+                                        , ocValue = newValueWithTT
                                         }
-                                    ]
+                                    | not (isZero newValueWithTT)]
                                 }
                     in traceIfFalse "S5" {-"State transition invalid - constraints not satisfied by ScriptContext"-} (checkScriptContext @_ @s txc ptx)
             Nothing -> trace "S6" {-"State transition invalid - input is not a valid transition at the current state"-} False

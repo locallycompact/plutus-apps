@@ -141,7 +141,7 @@ instance Eq GameState where
 -- | Check whether a 'ClearString' is the preimage of a
 --   'HashedString'
 checkGuess :: HashedString -> ClearString -> Bool
-checkGuess (HashedString actual) (ClearString gss) = actual == (sha2_256 gss)
+checkGuess (HashedString actual) (ClearString gss) = actual == sha2_256 gss
 
 -- | Inputs (actions)
 data GameInput =

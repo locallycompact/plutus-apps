@@ -53,6 +53,7 @@ module Plutus.Contract.StateMachine(
     ) where
 
 import Control.Lens
+import Control.Monad (unless)
 import Control.Monad.Error.Lens
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Default (Default (def))
@@ -67,6 +68,7 @@ import Data.Void (Void, absurd)
 import GHC.Generics (Generic)
 import Ledger (POSIXTime, Slot, TxOutRef, Value, scriptCurrencySymbol)
 import Ledger qualified
+import Ledger.Ada qualified as Ada
 import Ledger.Constraints (ScriptLookups, TxConstraints (..), mintingPolicy, mustMintValueWithRedeemer,
                            mustPayToTheScript, mustSpendPubKeyOutput)
 import Ledger.Constraints.OffChain (UnbalancedTx)
@@ -429,7 +431,11 @@ runInitialiseWith customLookups customConstraints StateMachineClient{scInstance}
             <> Constraints.unspentOutputs utxo
             <> customLookups
     utx <- either (throwing _ConstraintResolutionError) pure (Constraints.mkTx lookups constraints)
-    submitTxConfirmed utx
+    let adjustedUtx = Constraints.adjustUnbalancedTx utx
+    unless (utx == adjustedUtx) $
+      logWarn @Text $ "Plutus.Contract.StateMachine.runInitialise: "
+                    <> "Found a transaction output value with less than the minimum amount of Ada. Adjusting ..."
+    submitTxConfirmed adjustedUtx
     pure initialState
 
 -- | Run one step of a state machine, returning the new state. We can supply additional constraints and lookups for transaction.
@@ -469,16 +475,22 @@ runGuardedStepWith ::
     -> (UnbalancedTx -> state -> state -> Maybe a) -- ^ The guard to check before running the step
     -> Contract w schema e (Either a (TransitionResult state input))
 runGuardedStepWith userLookups userConstraints smc input guard = mapError (review _SMContractError) $ mkStep smc input >>= \case
-     Right StateMachineTransition{smtConstraints,smtOldState=State{stateData=os}, smtNewState=State{stateData=ns}, smtLookups} -> do
-         pk <- ownPubKeyHash
-         let lookups = smtLookups { Constraints.slOwnPubkeyHash = Just pk }
-         utx <- either (throwing _ConstraintResolutionError) pure (Constraints.mkTx (lookups <> userLookups) (smtConstraints <> userConstraints))
-         case guard utx os ns of
-             Nothing -> do
-                 submitTxConfirmed utx
-                 pure $ Right $ TransitionSuccess ns
-             Just a  -> pure $ Left a
-     Left e -> pure $ Right $ TransitionFailure e
+    Right StateMachineTransition{smtConstraints,smtOldState=State{stateData=os}, smtNewState=State{stateData=ns}, smtLookups} -> do
+        pk <- ownPubKeyHash
+        let lookups = smtLookups { Constraints.slOwnPubkeyHash = Just pk }
+        utx <- either (throwing _ConstraintResolutionError)
+                      pure
+                      (Constraints.mkTx (lookups <> userLookups) (smtConstraints <> userConstraints))
+        let adjustedUtx = Constraints.adjustUnbalancedTx utx
+        unless (utx == adjustedUtx) $
+          logWarn @Text $ "Plutus.Contract.StateMachine.runStep: "
+                       <> "Found a transaction output value with less than the minimum amount of Ada. Adjusting ..."
+        case guard adjustedUtx os ns of
+            Nothing -> do
+                submitTxConfirmed adjustedUtx
+                pure $ Right $ TransitionSuccess ns
+            Just a  -> pure $ Left a
+    Left e -> pure $ Right $ TransitionFailure e
 
 -- | Given a state machine client and an input to apply to
 --   the client's state machine instance, compute the 'StateMachineTransition'
@@ -517,12 +529,14 @@ mkStep client@StateMachineClient{scInstance} input = do
                         red = Ledger.Redeemer (PlutusTx.toBuiltinData (Scripts.validatorHash typedValidator, Burn))
                         unmint = if isFinal then mustMintValueWithRedeemer red (inv $ SM.threadTokenValueOrZero scInstance) else mempty
                         outputConstraints =
-                            [ OutputConstraint
-                                { ocDatum = stateData newState
-                                  -- Add the thread token value back to the output
-                                , ocValue = stateValue newState <> SM.threadTokenValueOrZero scInstance
-                                }
-                            | not isFinal ]
+                            let newStateValue = stateValue newState <> SM.threadTokenValueOrZero scInstance
+                                missingLovelace = max 0 (Ledger.minAdaTxOut - Ada.fromValue (stateValue newState))
+                             in [ OutputConstraint
+                                    { ocDatum = stateData newState
+                                      -- Add the thread token value back to the output
+                                    , ocValue = newStateValue <> Ada.toValue missingLovelace
+                                  }
+                                | not isFinal && not (Value.isZero newStateValue) ]
                     in pure
                         $ Right
                         $ StateMachineTransition
