@@ -1,5 +1,6 @@
 {-# LANGUAGE DataKinds             #-}
 {-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveDataTypeable    #-}
 {-# LANGUAGE DerivingStrategies    #-}
 {-# LANGUAGE FlexibleContexts      #-}
 {-# LANGUAGE FlexibleInstances     #-}
@@ -22,7 +23,7 @@ module Wallet.Emulator.Wallet where
 
 import Cardano.Wallet.Primitive.Types qualified as Cardano.Wallet
 import Control.Lens (makeLenses, makePrisms, over, view, (&), (.~), (^.))
-import Control.Monad (foldM)
+import Control.Monad (foldM, (<=<))
 import Control.Monad.Freer (Eff, Member, Members, interpret, type (~>))
 import Control.Monad.Freer.Error (Error, runError, throwError)
 import Control.Monad.Freer.Extras.Log (LogMsg, logDebug, logInfo, logWarn)
@@ -31,6 +32,7 @@ import Control.Monad.Freer.TH (makeEffect)
 import Data.Aeson (FromJSON (parseJSON), ToJSON (toJSON), ToJSONKey)
 import Data.Aeson qualified as Aeson
 import Data.Bifunctor (bimap, first, second)
+import Data.Data
 import Data.Default (Default (def))
 import Data.Foldable (Foldable (fold), find, foldl', for_)
 import Data.Map qualified as Map
@@ -56,7 +58,7 @@ import Ledger.Constraints.OffChain (UnbalancedTx (UnbalancedTx, unBalancedTxTx, 
 import Ledger.Constraints.OffChain qualified as U
 import Ledger.Credential (Credential (PubKeyCredential, ScriptCredential))
 import Ledger.Fee (FeeConfig, calcFees)
-import Ledger.TimeSlot (SlotConfig, posixTimeRangeToContainedSlotRange)
+import Ledger.TimeSlot (SlotConfig)
 import Ledger.Tx qualified as Tx
 import Ledger.Value qualified as Value
 import Plutus.ChainIndex (PageQuery)
@@ -65,6 +67,7 @@ import Plutus.ChainIndex.Api (UtxosResponse (page))
 import Plutus.ChainIndex.Emulator (ChainIndexEmulatorState, ChainIndexQueryEffect)
 import Plutus.Contract (WalletAPIError)
 import Plutus.Contract.Checkpoint (CheckpointLogMsg)
+import Plutus.Contract.Wallet (finalize)
 import PlutusTx.Prelude qualified as PlutusTx
 import Prettyprinter (Pretty (pretty))
 import Servant.API (FromHttpApiData (parseUrlPiece), ToHttpApiData (toUrlPiece))
@@ -85,13 +88,24 @@ instance Show SigningProcess where
     show = const "SigningProcess <...>"
 
 -- | A wallet identifier
-newtype Wallet = Wallet { getWalletId :: WalletId }
-    deriving (Eq, Ord, Generic)
-    deriving newtype (ToHttpApiData, FromHttpApiData)
+data Wallet = Wallet { prettyWalletName :: Maybe String , getWalletId :: WalletId }
+    deriving (Generic, Data)
     deriving anyclass (ToJSON, FromJSON, ToJSONKey)
 
+instance Eq Wallet where
+  w == w' = getWalletId w == getWalletId w'
+
+instance Ord Wallet where
+  compare w w' = compare (getWalletId w) (getWalletId w')
+
+instance ToHttpApiData Wallet where
+  toUrlPiece = toUrlPiece . getWalletId
+
+instance FromHttpApiData Wallet where
+  parseUrlPiece = pure . Wallet Nothing <=< parseUrlPiece
+
 toMockWallet :: MockWallet -> Wallet
-toMockWallet = Wallet . WalletId . CW.mwWalletId
+toMockWallet mw = Wallet (CW.mwPrintAs mw) . WalletId . CW.mwWalletId $ mw
 
 knownWallets :: [Wallet]
 knownWallets = toMockWallet <$> CW.knownMockWallets
@@ -103,16 +117,19 @@ fromWalletNumber :: WalletNumber -> Wallet
 fromWalletNumber = toMockWallet . CW.fromWalletNumber
 
 instance Show Wallet where
-    showsPrec p (Wallet i) = showParen (p > 9) $ showString "Wallet " . shows i
+    showsPrec p (Wallet Nothing i)  = showParen (p > 9) $ showString "Wallet " . shows i
+    showsPrec p (Wallet (Just s) _) = showParen (p > 9) $ showString ("Wallet " ++ s)
 
 instance Pretty Wallet where
-    pretty (Wallet i) = "W" <> pretty (T.take 7 $ toBase16 i)
+    pretty (Wallet Nothing i)  = "W" <> pretty (T.take 7 $ toBase16 i)
+    pretty (Wallet (Just s) _) = "W[" <> fromString s <> "]"
 
 deriving anyclass instance OpenApi.ToSchema Wallet
 deriving anyclass instance OpenApi.ToSchema Cardano.Wallet.WalletId
+deriving instance Data Cardano.Wallet.WalletId
 
 newtype WalletId = WalletId { unWalletId :: Cardano.Wallet.WalletId }
-    deriving (Eq, Ord, Generic)
+    deriving (Eq, Ord, Generic, Data)
     deriving anyclass (ToJSONKey)
 
 instance Show WalletId where
@@ -135,7 +152,7 @@ fromBase16 s = bimap show WalletId (fromText s)
 
 -- | The 'MockWallet' whose ID is the given wallet ID (if it exists)
 walletToMockWallet :: Wallet -> Maybe MockWallet
-walletToMockWallet (Wallet wid) = find ((==) wid . WalletId . CW.mwWalletId) CW.knownMockWallets
+walletToMockWallet (Wallet _ wid) = find ((==) wid . WalletId . CW.mwWalletId) CW.knownMockWallets
 
 -- | The public key of a mock wallet.  (Fails if the wallet is not a mock wallet).
 mockWalletPaymentPubKey :: Wallet -> PaymentPubKey
@@ -249,8 +266,7 @@ handleWallet feeCfg = \case
         logInfo $ BalancingUnbalancedTx utx'
         utxo <- get >>= ownOutputs
         slotConfig <- WAPI.getClientSlotConfig
-        let validitySlotRange = posixTimeRangeToContainedSlotRange slotConfig (utx' ^. U.validityTimeRange)
-        let utx = utx' & U.tx . Ledger.validRange .~ validitySlotRange
+        let utx = finalize slotConfig utx'
         utxWithFees <- validateTxAndAddFees feeCfg slotConfig utxo utx
         -- balance to add fees
         tx' <- handleBalanceTx utxo (utx & U.tx . Ledger.fee .~ (utxWithFees ^. U.tx . Ledger.fee))
@@ -309,7 +325,7 @@ ownOutputs WalletState{_mockWallet} = do
       pure $ ChainIndex.pageItems refPage ++ nextItems
 
     txOutRefTxOutFromRef :: TxOutRef -> Eff effs (Maybe (TxOutRef, ChainIndexTxOut))
-    txOutRefTxOutFromRef ref = fmap (ref,) <$> ChainIndex.txOutFromRef ref
+    txOutRefTxOutFromRef ref = fmap (ref,) <$> ChainIndex.unspentTxOutFromRef ref
 
 validateTxAndAddFees ::
     ( Member (Error WAPI.WalletAPIError) effs
@@ -342,7 +358,7 @@ lookupValue ::
     => Tx.TxIn
     -> Eff effs Value
 lookupValue outputRef@TxIn {txInRef} = do
-    txoutMaybe <- ChainIndex.txOutFromRef txInRef
+    txoutMaybe <- ChainIndex.unspentTxOutFromRef txInRef
     case txoutMaybe of
         Just txout -> pure $ view Ledger.ciTxOutValue txout
         Nothing ->
