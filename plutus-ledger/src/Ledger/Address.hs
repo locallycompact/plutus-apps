@@ -33,14 +33,14 @@ import Prettyprinter (Pretty)
 newtype PaymentPrivateKey = PaymentPrivateKey { unPaymentPrivateKey :: PrivateKey }
 
 newtype PaymentPubKey = PaymentPubKey { unPaymentPubKey :: PubKey }
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data)
     deriving anyclass (ToJSON, FromJSON, ToJSONKey, FromJSONKey, OpenApi.ToSchema)
     deriving newtype (PlutusTx.Eq, PlutusTx.Ord, Serialise, PlutusTx.ToData, PlutusTx.FromData, PlutusTx.UnsafeFromData)
     deriving (Show, Pretty) via PubKey
 makeLift ''PaymentPubKey
 
 newtype PaymentPubKeyHash = PaymentPubKeyHash { unPaymentPubKeyHash :: PubKeyHash }
-    deriving stock (Eq, Ord, Generic)
+    deriving stock (Eq, Ord, Generic, Data)
     deriving anyclass (ToJSON, FromJSON, ToJSONKey, FromJSONKey, OpenApi.ToSchema)
     deriving newtype (PlutusTx.Eq, PlutusTx.Ord, Serialise, Hashable, PlutusTx.ToData, PlutusTx.FromData, PlutusTx.UnsafeFromData)
     deriving (Show, Pretty) via PubKeyHash
