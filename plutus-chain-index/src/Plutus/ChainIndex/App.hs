@@ -21,15 +21,16 @@ import Cardano.BM.Configuration.Model qualified as CM
 
 import Cardano.BM.Setup (setupTrace_)
 import Cardano.BM.Trace (Trace)
-import Control.Concurrent.Async (wait, withAsync)
+import Control.Concurrent.Async (withAsync)
 import Control.Concurrent.STM.TChan (newBroadcastTChanIO)
 import Plutus.ChainIndex.CommandLine (AppConfig (AppConfig, acCLIConfigOverrides, acCommand, acConfigPath, acLogConfigPath, acMinLogLevel),
                                       Command (DumpDefaultConfig, DumpDefaultLoggingConfig, StartChainIndex),
                                       applyOverrides, cmdWithHelpParser)
 import Plutus.ChainIndex.Compatibility (fromCardanoBlockNo)
 import Plutus.ChainIndex.Config qualified as Config
-import Plutus.ChainIndex.Lib (defaultChainSyncHandler, getTipSlot, storeFromBlockNo, syncChainIndex,
-                              withRunRequirements, writeChainSyncEventToChan)
+import Plutus.ChainIndex.Events (processEventsChan)
+import Plutus.ChainIndex.Lib (getTipSlot, storeChainSyncHandler, storeFromBlockNo, syncChainIndex, withRunRequirements,
+                              writeChainSyncEventToChan)
 import Plutus.ChainIndex.Logging qualified as Logging
 import Plutus.ChainIndex.Server qualified as Server
 import Plutus.ChainIndex.SyncStats (SyncLog, convertEventToSyncStats, logProgress)
@@ -77,22 +78,25 @@ runMain logConfig config = do
     slotNo <- getTipSlot config
     print slotNo
 
-    -- Channel for broadcasting 'ChainSyncEvent's
-    chan <- newBroadcastTChanIO
+    -- Channel for broadcasting 'ChainSyncEvent's for sync stats
+    syncStatsChan <- newBroadcastTChanIO
+    -- Channel for processing events
+    eventsChan <- newBroadcastTChanIO
     syncHandler
-      <- defaultChainSyncHandler runReq
+      <- storeChainSyncHandler eventsChan
         & storeFromBlockNo (fromCardanoBlockNo $ Config.cicStoreFrom config)
-        & writeChainSyncEventToChan convertEventToSyncStats chan
+        & writeChainSyncEventToChan convertEventToSyncStats syncStatsChan
 
     putStrLn $ "Connecting to the node using socket: " <> Config.cicSocketPath config
     syncChainIndex config runReq syncHandler
 
     (trace :: Trace IO (PrettyObject SyncLog), _) <- setupTrace_ logConfig "chain-index"
-    withAsync (runLogEffects (convertLog PrettyObject trace) $ logProgress chan) wait
+    withAsync (runLogEffects (convertLog PrettyObject trace) $ logProgress syncStatsChan) $ \_ -> do
+      withAsync (processEventsChan runReq eventsChan (Config.cicAppendPeriod config) (Config.cicAppendBatchSize config)) $ \_ -> do
 
-    let port = show (Config.cicPort config)
-    putStrLn $ "Starting webserver on port " <> port
-    putStrLn $ "A Swagger UI for the endpoints are available at "
-            <> "http://localhost:" <> port <> "/swagger/swagger-ui"
-    Server.serveChainIndexQueryServer (Config.cicPort config) runReq
+        let port = show (Config.cicPort config)
+        putStrLn $ "Starting webserver on port " <> port
+        putStrLn $ "A Swagger UI for the endpoints are available at "
+                <> "http://localhost:" <> port <> "/swagger/swagger-ui"
+        Server.serveChainIndexQueryServer (Config.cicPort config) runReq
 
