@@ -335,6 +335,7 @@ startChainIndex networkId
                <> " --db-path " <> getChainIndexDbPath (createChainIndexDbPath nodeOptsOutputDir)
                <> " --port " <> show (unChainIndexPort chainIndexOptsPort)
                <> " --network-id " <> show (C.unNetworkMagic $ C.toNetworkMagic networkId)
+               <> " --append-batch-size " <> (show 1000)
                <> " start-index"
 
 -- | Starts the `cardano-wallet` server from a specific network (mainnet or
