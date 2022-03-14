@@ -310,6 +310,7 @@ startCardanoNode networkName NodeOpts { nodeOptsOutputDir, nodeOptsPort } = do
         databaseFpath = getNodeDbDirPath (createNodeDbDirPath nodeOptsOutputDir)
         socketPath = getNodeSocketFilePath (createNodeSocketFilePath nodeOptsOutputDir)
     callCommand $ cardanoNodeCmd
+               <> " +RTS -N"
                <> " run"
                <> " --config " <> nodeConfigFpath
                <> " --topology " <> topologyFpath
