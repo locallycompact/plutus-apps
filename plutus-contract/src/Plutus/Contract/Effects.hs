@@ -52,6 +52,7 @@ module Plutus.Contract.Effects( -- TODO: Move to Requests.Internal
     _BalanceTxResp,
     _WriteBalancedTxResp,
     _ExposeEndpointResp,
+    _ExposeEndpointRespCsv,
     _PosixTimeRangeToContainedSlotRangeResp,
     _YieldUnbalancedTxResp,
     -- ** Chain index response effect types
@@ -81,6 +82,7 @@ module Plutus.Contract.Effects( -- TODO: Move to Requests.Internal
 import Control.Lens (Iso', Prism', iso, makePrisms, prism')
 import Data.Aeson (FromJSON, ToJSON)
 import Data.Aeson qualified as JSON
+import Data.ByteString.Lazy (ByteString)
 import Data.List.NonEmpty (NonEmpty)
 import Data.OpenApi.Schema qualified as OpenApi
 import Data.String (fromString)
@@ -159,6 +161,7 @@ data PABResp =
     | BalanceTxResp BalanceTxResponse
     | WriteBalancedTxResp WriteBalancedTxResponse
     | ExposeEndpointResp EndpointDescription (EndpointValue JSON.Value)
+    | ExposeEndpointRespCsv EndpointDescription (EndpointValue ByteString)
     | PosixTimeRangeToContainedSlotRangeResp (Either SlotConversionError SlotRange)
     | YieldUnbalancedTxResp ()
     deriving stock (Eq, Show, Generic)
