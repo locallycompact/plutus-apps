@@ -92,7 +92,7 @@ extra-deps:
     - lib/test-utils
     - lib/numeric
 - git: https://github.com/input-output-hk/ouroboros-network
-  commit: 1f4973f36f689d6da75b5d351fb124d66ef1057d
+  commit: ad47441e9e399495579d7dd05ccaf96b46a487b2
   subdirs:
     - monoidal-synchronisation
     - typed-protocols
@@ -138,7 +138,7 @@ extra-deps:
     - libs/small-steps
     - semantics/small-steps-test
 - git: https://github.com/input-output-hk/cardano-node.git
-  commit: b6ca519f97a0e795611a63174687e6bb70c9f752
+  commit: 65422ff373f2f88a563afa746a9a16d211ffdc7c
   subdirs:
     - cardano-api
     - cardano-node
