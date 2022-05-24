@@ -113,9 +113,6 @@ instance Arbitrary RedeemerPtr where
     arbitrary = genericArbitrary
     shrink = genericShrink
 
-instance Arbitrary Value where
-    arbitrary = oneof [Aeson.String <$> arbitrary, Aeson.Number <$> arbitrary]
-
 instance Arbitrary a => Arbitrary (Extended a) where
     arbitrary = genericArbitrary
     shrink = genericShrink
