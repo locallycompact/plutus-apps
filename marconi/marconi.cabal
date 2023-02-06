@@ -209,7 +209,8 @@ test-suite marconi-test
   -- Other IOG dependencies
   --------------------------
   build-depends:
-    , cardano-api:{cardano-api, gen}
+    , cardano-api
+    , cardano-api-gen
     , cardano-testnet
     , iohk-monitoring
     , plutus-ledger-api

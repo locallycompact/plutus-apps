@@ -202,7 +202,8 @@ test-suite marconi-mamba-test
   ------------------------
   build-depends:
     , base                            >=4.9 && <5
-    , cardano-api:{cardano-api, gen}
+    , cardano-api
+    , cardano-api-gen
     , containers
     , hedgehog
     , lens

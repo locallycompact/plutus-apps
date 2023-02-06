@@ -256,7 +256,8 @@ test-suite plutus-pab-test-light
   -- Other IOG dependencies
   --------------------------
   build-depends:
-    , cardano-api:{cardano-api, gen}  >=1.35
+    , cardano-api
+    , cardano-api-gen
     , plutus-tx                       >=1.0.0
 
   ------------------------

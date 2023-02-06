@@ -168,7 +168,8 @@ test-suite plutus-example-test
   -- Other IOG dependencies
   --------------------------
   build-depends:
-    , cardano-api:{cardano-api, gen}  >=1.35
+    , cardano-api
+    , cardano-api-gen  >=1.35
     , cardano-cli                     >=1.35
     , cardano-ledger-alonzo
     , cardano-ledger-core
